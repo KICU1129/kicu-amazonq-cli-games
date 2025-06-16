@@ -1,1 +1,0 @@
-# kicu-amazonq-cli-games
