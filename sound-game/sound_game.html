@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Rhythm Action Game - Fixed</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(45deg, #1a1a2e, #16213e, #0f3460);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            border: 3px solid #00ffff;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+        }
+        
+        canvas {
+            display: block;
+            background: radial-gradient(circle, #0a0a0a, #1a1a1a);
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #00ffff;
+            font-size: 16px;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffffff;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        #gameControls {
+            position: absolute;
+            top: 10px;
+            right: 120px;
+            display: none;
+        }
+        
+        #quitBtn {
+            background: linear-gradient(45deg, #ff4444, #cc0000);
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+        
+        #quitBtn:hover {
+            background: linear-gradient(45deg, #cc0000, #ff4444);
+        }
+        
+        #audioStatus {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #ffff00;
+            font-size: 12px;
+        }
+        
+        .glow {
+            animation: glow 1s ease-in-out infinite alternate;
+        }
+        
+        @keyframes glow {
+            from { box-shadow: 0 0 20px rgba(0, 255, 255, 0.5); }
+            to { box-shadow: 0 0 40px rgba(0, 255, 255, 1); }
+        }
+        
+        button {
+            background: linear-gradient(45deg, #00ffff, #0080ff);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            margin: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: linear-gradient(45deg, #0080ff, #00ffff);
+            transform: scale(1.05);
+        }
+        
+        #musicInfo {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="900" height="600"></canvas>
+        <div id="ui">
+            <div>スコア: <span id="score">0</span></div>
+            <div>レベル: <span id="level">1</span></div>
+            <div>HP: <span id="hp">100</span>/<span id="maxHp">100</span></div>
+            <div>コンボ: <span id="combo">0</span></div>
+        </div>
+        <div id="gameControls">
+            <button id="quitBtn">🚪 やめる</button>
+        </div>
+        <div id="audioStatus">音楽: <span id="audioState">待機中</span></div>
+        <div id="musicInfo">
+            <div>現在の楽章: <span id="currentSection">イントロ</span></div>
+            <div>BPM: <span id="bpm">120</span></div>
+        </div>
+        <div id="controls">
+            <div>矢印キー: 移動 | スペース: ジャンプ | Shift: ダッシュ</div>
+            <div>A/D キーでも左右移動できます</div>
+            <div>音楽のビートに合わせて床が変形します！</div>
+            <button id="startBtn">🎵 音楽付きゲーム開始</button>
+            <button id="silentBtn">🔇 無音でゲーム開始</button>
+        </div>
+    </div>
+
+    <script>
+        class EnhancedRhythmGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.width = this.canvas.width;
+                this.height = this.canvas.height;
+                
+                // ゲーム状態
+                this.gameStarted = false;
+                this.audioEnabled = false;
+                this.score = 0;
+                this.level = 1;
+                this.hp = 100;
+                this.maxHp = 100;
+                this.combo = 0;
+                this.invulnerable = false;
+                this.invulnerableTime = 0;
+                
+                // プレイヤー
+                this.player = {
+                    x: 100,
+                    y: this.height - 120,
+                    width: 25,
+                    height: 35,
+                    velocityY: 0,
+                    velocityX: 0,
+                    onGround: true,
+                    color: '#00ffff',
+                    dashCooldown: 0,
+                    trail: []
+                };
+                
+                // 音楽システム
+                this.audioContext = null;
+                this.oscillators = [];
+                this.musicSections = ['intro', 'verse', 'chorus', 'bridge', 'outro'];
+                this.currentSection = 0;
+                this.sectionProgress = 0;
+                this.baseBPM = 120;
+                this.currentBPM = 120;
+                this.beatInterval = 500;
+                this.lastBeat = 0;
+                this.beatCount = 0;
+                this.musicTimer = null;
+                this.measureCount = 0;
+                
+                // ゲーム要素
+                this.particles = [];
+                this.platforms = [];
+                this.enemies = [];
+                this.collectibles = [];
+                this.backgroundHue = 0;
+                this.beatIntensity = 0;
+                this.floorWaves = [];
+                this.levelUpAnimation = {
+                    active: false,
+                    timer: 0,
+                    maxTimer: 180,
+                    scale: 0,
+                    rotation: 0,
+                    particles: [],
+                    newLevel: 1
+                };
+                
+                // 入力
+                this.keys = {};
+                
+                this.initAudio();
+                this.initGame();
+                this.setupEventListeners();
+                this.gameLoop();
+            }
+            
+            async initAudio() {
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.updateAudioStatus('初期化完了');
+                } catch (error) {
+                    console.error('Audio initialization failed:', error);
+                    this.updateAudioStatus('初期化失敗');
+                }
+            }
+            
+            updateAudioStatus(status) {
+                document.getElementById('audioState').textContent = status;
+            }
+            
+            async startAudio() {
+                try {
+                    if (!this.audioContext) {
+                        await this.initAudio();
+                    }
+                    
+                    if (this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
+                    
+                    this.createDynamicMusic();
+                    this.audioEnabled = true;
+                    this.updateAudioStatus('再生中');
+                } catch (error) {
+                    console.error('Failed to start audio:', error);
+                    this.updateAudioStatus('エラー');
+                    this.audioEnabled = false;
+                }
+            }
+            
+            createDynamicMusic() {
+                if (!this.audioContext || this.audioContext.state !== 'running') {
+                    return;
+                }
+                
+                this.oscillators.forEach(osc => {
+                    try { osc.osc.stop(); } catch(e) {}
+                });
+                this.oscillators = [];
+                
+                this.createMusicLayers();
+                this.startMusicSequence();
+            }
+            
+            createMusicLayers() {
+                const now = this.audioContext.currentTime;
+                
+                // ベースライン
+                const bass = this.audioContext.createOscillator();
+                const bassGain = this.audioContext.createGain();
+                bass.type = 'sawtooth';
+                bass.frequency.setValueAtTime(55, now);
+                bassGain.gain.setValueAtTime(0.15, now);
+                bass.connect(bassGain);
+                bassGain.connect(this.audioContext.destination);
+                bass.start();
+                this.oscillators.push({osc: bass, gain: bassGain, type: 'bass'});
+                
+                // リードメロディー
+                const lead = this.audioContext.createOscillator();
+                const leadGain = this.audioContext.createGain();
+                lead.type = 'square';
+                lead.frequency.setValueAtTime(220, now);
+                leadGain.gain.setValueAtTime(0.08, now);
+                lead.connect(leadGain);
+                leadGain.connect(this.audioContext.destination);
+                lead.start();
+                this.oscillators.push({osc: lead, gain: leadGain, type: 'lead'});
+                
+                // パッド（和音）
+                const pad = this.audioContext.createOscillator();
+                const padGain = this.audioContext.createGain();
+                pad.type = 'triangle';
+                pad.frequency.setValueAtTime(330, now);
+                padGain.gain.setValueAtTime(0.05, now);
+                pad.connect(padGain);
+                padGain.connect(this.audioContext.destination);
+                pad.start();
+                this.oscillators.push({osc: pad, gain: padGain, type: 'pad'});
+                
+                // アルペジオ
+                const arp = this.audioContext.createOscillator();
+                const arpGain = this.audioContext.createGain();
+                arp.type = 'sine';
+                arp.frequency.setValueAtTime(440, now);
+                arpGain.gain.setValueAtTime(0.04, now);
+                arp.connect(arpGain);
+                arpGain.connect(this.audioContext.destination);
+                arp.start();
+                this.oscillators.push({osc: arp, gain: arpGain, type: 'arp'});
+            }
+            
+            startMusicSequence() {
+                const playBeat = () => {
+                    if (this.gameStarted) {
+                        this.updateMusicSection();
+                        if (this.audioEnabled && this.audioContext && this.audioContext.state === 'running') {
+                            this.playCurrentSection();
+                        }
+                        this.onBeat();
+                    }
+                };
+                
+                this.musicTimer = setInterval(playBeat, this.beatInterval);
+            }
+            
+            updateMusicSection() {
+                this.sectionProgress++;
+                const beatsPerSection = 32;
+                
+                if (this.sectionProgress >= beatsPerSection) {
+                    this.currentSection = (this.currentSection + 1) % this.musicSections.length;
+                    this.sectionProgress = 0;
+                    this.updateMusicInfo();
+                }
+                
+                this.measureCount = Math.floor(this.sectionProgress / 4);
+            }
+            
+            playCurrentSection() {
+                const currentTime = this.audioContext.currentTime;
+                const section = this.musicSections[this.currentSection];
+                const patterns = this.getMusicPatterns(section);
+                
+                this.oscillators.forEach(layer => {
+                    const pattern = patterns[layer.type];
+                    if (pattern) {
+                        const noteIndex = this.sectionProgress % pattern.length;
+                        const frequency = pattern[noteIndex];
+                        
+                        if (frequency > 0) {
+                            layer.osc.frequency.setValueAtTime(frequency, currentTime);
+                            layer.gain.gain.setValueAtTime(patterns.volumes[layer.type] || 0.1, currentTime);
+                        } else {
+                            layer.gain.gain.setValueAtTime(0, currentTime);
+                        }
+                    }
+                });
+            }
+            
+            getMusicPatterns(section) {
+                const patterns = {
+                    intro: {
+                        bass: [65.41, 0, 65.41, 0, 73.42, 0, 65.41, 0],
+                        lead: [261.63, 293.66, 329.63, 261.63, 0, 293.66, 0, 329.63],
+                        pad: [130.81, 130.81, 146.83, 146.83, 164.81, 164.81, 146.83, 130.81],
+                        arp: [523.25, 659.25, 783.99, 659.25, 523.25, 659.25, 783.99, 659.25],
+                        volumes: {bass: 0.15, lead: 0.08, pad: 0.05, arp: 0.04}
+                    },
+                    verse: {
+                        bass: [65.41, 65.41, 0, 73.42, 82.41, 0, 73.42, 65.41],
+                        lead: [261.63, 0, 293.66, 261.63, 329.63, 293.66, 0, 261.63],
+                        pad: [130.81, 164.81, 196.00, 164.81, 146.83, 174.61, 196.00, 174.61],
+                        arp: [523.25, 0, 659.25, 0, 783.99, 0, 659.25, 523.25],
+                        volumes: {bass: 0.18, lead: 0.12, pad: 0.07, arp: 0.06}
+                    },
+                    chorus: {
+                        bass: [65.41, 73.42, 82.41, 73.42, 65.41, 82.41, 73.42, 65.41],
+                        lead: [523.25, 587.33, 659.25, 523.25, 440.00, 493.88, 523.25, 440.00],
+                        pad: [261.63, 293.66, 329.63, 293.66, 220.00, 246.94, 261.63, 220.00],
+                        arp: [1046.50, 1174.66, 1318.51, 1174.66, 880.00, 987.77, 1046.50, 880.00],
+                        volumes: {bass: 0.20, lead: 0.15, pad: 0.10, arp: 0.08}
+                    },
+                    bridge: {
+                        bass: [82.41, 0, 0, 73.42, 0, 65.41, 0, 0],
+                        lead: [329.63, 369.99, 0, 329.63, 293.66, 0, 261.63, 293.66],
+                        pad: [164.81, 0, 196.00, 0, 146.83, 0, 130.81, 0],
+                        arp: [659.25, 739.99, 880.00, 783.99, 659.25, 587.33, 523.25, 587.33],
+                        volumes: {bass: 0.12, lead: 0.10, pad: 0.08, arp: 0.05}
+                    },
+                    outro: {
+                        bass: [65.41, 0, 0, 0, 73.42, 0, 0, 65.41],
+                        lead: [261.63, 293.66, 329.63, 0, 0, 293.66, 261.63, 0],
+                        pad: [130.81, 146.83, 164.81, 146.83, 130.81, 0, 0, 0],
+                        arp: [523.25, 0, 659.25, 0, 0, 0, 523.25, 0],
+                        volumes: {bass: 0.10, lead: 0.06, pad: 0.04, arp: 0.03}
+                    }
+                };
+                
+                return patterns[section] || patterns.intro;
+            }
+            
+            updateMusicInfo() {
+                const sectionNames = {
+                    intro: 'イントロ',
+                    verse: 'Aメロ', 
+                    chorus: 'サビ',
+                    bridge: 'Bメロ',
+                    outro: 'アウトロ'
+                };
+                
+                document.getElementById('currentSection').textContent = 
+                    sectionNames[this.musicSections[this.currentSection]] || 'イントロ';
+                document.getElementById('bpm').textContent = this.currentBPM;
+            }
+            
+            setupEventListeners() {
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                    // デバッグ用
+                    console.log('Key pressed:', e.code);
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+                
+                document.getElementById('startBtn').addEventListener('click', async () => {
+                    if (!this.gameStarted) {
+                        this.gameStarted = true;
+                        document.getElementById('gameContainer').classList.add('glow');
+                        await this.startAudio();
+                        this.hideButtons();
+                        this.showGameControls();
+                    }
+                });
+                
+                document.getElementById('silentBtn').addEventListener('click', () => {
+                    if (!this.gameStarted) {
+                        this.gameStarted = true;
+                        this.audioEnabled = false;
+                        this.updateAudioStatus('無音モード');
+                        document.getElementById('gameContainer').classList.add('glow');
+                        this.startMusicSequence();
+                        this.hideButtons();
+                        this.showGameControls();
+                    }
+                });
+                
+                document.getElementById('quitBtn').addEventListener('click', () => {
+                    this.quitGame();
+                });
+            }
+            
+            hideButtons() {
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('silentBtn').style.display = 'none';
+            }
+            
+            showGameControls() {
+                document.getElementById('gameControls').style.display = 'block';
+            }
+            
+            hideGameControls() {
+                document.getElementById('gameControls').style.display = 'none';
+            }
+            
+            quitGame() {
+                // 音楽停止
+                this.oscillators.forEach(osc => {
+                    try { osc.osc.stop(); } catch(e) {}
+                });
+                if (this.musicTimer) clearInterval(this.musicTimer);
+                
+                // ゲーム状態リセット
+                this.gameStarted = false;
+                this.audioEnabled = false;
+                this.score = 0;
+                this.level = 1;
+                this.hp = 100;
+                this.combo = 0;
+                this.invulnerable = false;
+                this.invulnerableTime = 0;
+                this.beatCount = 0;
+                this.currentSection = 0;
+                this.sectionProgress = 0;
+                this.currentBPM = 120;
+                this.beatInterval = 500;
+                
+                // プレイヤーリセット
+                this.player.x = 100;
+                this.player.y = this.height - 120;
+                this.player.velocityY = 0;
+                this.player.velocityX = 0;
+                this.player.onGround = true;
+                this.player.dashCooldown = 0;
+                this.player.trail = [];
+                
+                // ゲーム要素クリア
+                this.particles = [];
+                this.enemies = [];
+                this.collectibles = [];
+                this.floorWaves = [];
+                this.backgroundHue = 0;
+                this.beatIntensity = 0;
+                
+                // レベルアップアニメーションリセット
+                this.levelUpAnimation.active = false;
+                this.levelUpAnimation.timer = 0;
+                this.levelUpAnimation.scale = 0;
+                this.levelUpAnimation.rotation = 0;
+                this.levelUpAnimation.particles = [];
+                this.levelUpAnimation.newLevel = 1;
+                
+                // プラットフォームリセット
+                this.platforms = [];
+                this.initGame();
+                
+                // UI表示切り替え
+                this.hideGameControls();
+                document.getElementById('startBtn').style.display = 'inline-block';
+                document.getElementById('silentBtn').style.display = 'inline-block';
+                document.getElementById('gameContainer').classList.remove('glow');
+                
+                this.updateAudioStatus('待機中');
+                this.updateMusicInfo();
+                this.updateUI();
+            }
+            
+            initGame() {
+                for (let i = 0; i < 8; i++) {
+                    this.platforms.push({
+                        x: i * 120,
+                        y: this.height - 30,
+                        width: 100,
+                        height: 30,
+                        originalY: this.height - 30,
+                        waveOffset: i * 0.5,
+                        color: '#333'
+                    });
+                }
+            }
+            
+            onBeat() {
+                this.lastBeat = Date.now();
+                this.beatCount++;
+                this.beatIntensity = 1.0;
+                
+                this.createBeatEffect();
+                this.updateFloorWaves();
+                this.spawnEnemy();
+                this.spawnCollectible();
+                this.updateLevel();
+            }
+            
+            createBeatEffect() {
+                const particleCount = this.audioEnabled ? 20 : 10;
+                for (let i = 0; i < particleCount; i++) {
+                    this.particles.push({
+                        x: Math.random() * this.width,
+                        y: Math.random() * this.height,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        life: 1.0,
+                        color: `hsl(${this.backgroundHue + Math.random() * 120}, 100%, 70%)`,
+                        size: Math.random() * 4 + 2
+                    });
+                }
+                
+                const intensity = this.audioEnabled ? 8 : 3;
+                this.canvas.style.transform = `translate(${Math.random() * intensity - intensity/2}px, ${Math.random() * intensity - intensity/2}px)`;
+                setTimeout(() => {
+                    this.canvas.style.transform = 'translate(0, 0)';
+                }, 120);
+            }
+            
+            updateFloorWaves() {
+                this.floorWaves.push({
+                    x: 0,
+                    amplitude: 20 + this.beatIntensity * 30,
+                    frequency: 0.01 + this.level * 0.002,
+                    speed: 2 + this.level * 0.5,
+                    life: 1.0,
+                    color: `hsl(${this.backgroundHue + 60}, 80%, 60%)`
+                });
+                
+                this.floorWaves = this.floorWaves.filter(wave => wave.life > 0);
+            }
+            
+            spawnEnemy() {
+                if (Math.random() < 0.4 + this.level * 0.05) {
+                    const enemyTypes = ['normal', 'jumper', 'fast'];
+                    const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+                    
+                    let enemy = {
+                        x: this.width,
+                        y: this.height - 60,
+                        width: 20,
+                        height: 20,
+                        speed: 2 + this.level * 0.3,
+                        color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                        type: type,
+                        jumpTimer: 0
+                    };
+                    
+                    if (type === 'jumper') {
+                        enemy.velocityY = 0;
+                        enemy.onGround = true;
+                    } else if (type === 'fast') {
+                        enemy.speed *= 1.5;
+                        enemy.color = '#ff0080';
+                    }
+                    
+                    this.enemies.push(enemy);
+                }
+            }
+            
+            spawnCollectible() {
+                if (Math.random() < 0.2) {
+                    this.collectibles.push({
+                        x: this.width,
+                        y: this.height - 100 - Math.random() * 100,
+                        width: 15,
+                        height: 15,
+                        speed: 1 + this.level * 0.2,
+                        color: '#ffff00',
+                        rotation: 0,
+                        value: 50 + this.level * 10
+                    });
+                }
+            }
+            
+            updateLevel() {
+                if (this.beatCount % 64 === 0) {
+                    this.level++;
+                    this.currentBPM = Math.min(180, this.baseBPM + this.level * 5);
+                    this.beatInterval = Math.max(200, 60000 / this.currentBPM);
+                    
+                    this.hp = Math.min(this.maxHp, this.hp + 20);
+                    
+                    // レベルアップ演出を開始
+                    this.startLevelUpAnimation();
+                    
+                    if (this.musicTimer) {
+                        clearInterval(this.musicTimer);
+                        this.startMusicSequence();
+                    }
+                }
+            }
+            
+            startLevelUpAnimation() {
+                this.levelUpAnimation.active = true;
+                this.levelUpAnimation.timer = 0;
+                this.levelUpAnimation.scale = 0;
+                this.levelUpAnimation.rotation = 0;
+                this.levelUpAnimation.newLevel = this.level;
+                this.levelUpAnimation.particles = [];
+                
+                // レベルアップ専用パーティクルを大量生成
+                for (let i = 0; i < 50; i++) {
+                    const angle = (Math.PI * 2 * i) / 50;
+                    const speed = 3 + Math.random() * 5;
+                    this.levelUpAnimation.particles.push({
+                        x: this.width / 2,
+                        y: this.height / 2,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 1.0,
+                        maxLife: 1.0,
+                        color: `hsl(${Math.random() * 360}, 100%, 70%)`,
+                        size: 3 + Math.random() * 5,
+                        rotation: 0,
+                        rotationSpeed: (Math.random() - 0.5) * 0.3
+                    });
+                }
+                
+                // 追加の爆発エフェクト
+                for (let i = 0; i < 30; i++) {
+                    this.particles.push({
+                        x: this.width / 2 + (Math.random() - 0.5) * 100,
+                        y: this.height / 2 + (Math.random() - 0.5) * 100,
+                        vx: (Math.random() - 0.5) * 15,
+                        vy: (Math.random() - 0.5) * 15,
+                        life: 1.0,
+                        color: `hsl(${45 + Math.random() * 60}, 100%, 80%)`,
+                        size: 4 + Math.random() * 8
+                    });
+                }
+                
+                // 画面を大きく振動
+                const bigShake = () => {
+                    this.canvas.style.transform = `translate(${Math.random() * 20 - 10}px, ${Math.random() * 20 - 10}px)`;
+                    setTimeout(() => {
+                        this.canvas.style.transform = 'translate(0, 0)';
+                    }, 100);
+                };
+                
+                bigShake();
+                setTimeout(bigShake, 200);
+                setTimeout(bigShake, 400);
+            }
+            
+            updateLevelUpAnimation() {
+                if (!this.levelUpAnimation.active) return;
+                
+                this.levelUpAnimation.timer++;
+                const progress = this.levelUpAnimation.timer / this.levelUpAnimation.maxTimer;
+                
+                // スケールアニメーション（バウンス効果）
+                if (progress < 0.3) {
+                    // 拡大フェーズ
+                    this.levelUpAnimation.scale = this.easeOutBounce(progress / 0.3) * 1.5;
+                } else if (progress < 0.7) {
+                    // 維持フェーズ
+                    this.levelUpAnimation.scale = 1.5;
+                } else {
+                    // 縮小フェーズ
+                    this.levelUpAnimation.scale = 1.5 * (1 - this.easeInQuart((progress - 0.7) / 0.3));
+                }
+                
+                // 回転アニメーション
+                this.levelUpAnimation.rotation += 0.05;
+                
+                // レベルアップ専用パーティクルの更新
+                this.levelUpAnimation.particles = this.levelUpAnimation.particles.filter(particle => {
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.vx *= 0.98;
+                    particle.vy *= 0.98;
+                    particle.life -= 0.015;
+                    particle.rotation += particle.rotationSpeed;
+                    return particle.life > 0;
+                });
+                
+                // アニメーション終了
+                if (this.levelUpAnimation.timer >= this.levelUpAnimation.maxTimer) {
+                    this.levelUpAnimation.active = false;
+                }
+            }
+            
+            // イージング関数
+            easeOutBounce(t) {
+                if (t < 1 / 2.75) {
+                    return 7.5625 * t * t;
+                } else if (t < 2 / 2.75) {
+                    return 7.5625 * (t -= 1.5 / 2.75) * t + 0.75;
+                } else if (t < 2.5 / 2.75) {
+                    return 7.5625 * (t -= 2.25 / 2.75) * t + 0.9375;
+                } else {
+                    return 7.5625 * (t -= 2.625 / 2.75) * t + 0.984375;
+                }
+            }
+            
+            easeInQuart(t) {
+                return t * t * t * t;
+            }
+            
+            renderLevelUpAnimation() {
+                const anim = this.levelUpAnimation;
+                const centerX = this.width / 2;
+                const centerY = this.height / 2;
+                
+                // 背景オーバーレイ
+                this.ctx.save();
+                this.ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * Math.min(1, anim.timer / 30)})`;
+                this.ctx.fillRect(0, 0, this.width, this.height);
+                
+                // レベルアップ専用パーティクル描画
+                anim.particles.forEach(particle => {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = particle.life;
+                    this.ctx.translate(particle.x, particle.y);
+                    this.ctx.rotate(particle.rotation);
+                    this.ctx.fillStyle = particle.color;
+                    this.ctx.fillRect(-particle.size/2, -particle.size/2, particle.size, particle.size);
+                    this.ctx.restore();
+                });
+                
+                // 中央の円形背景
+                this.ctx.save();
+                this.ctx.globalAlpha = Math.min(1, anim.timer / 30);
+                const gradient = this.ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 150 * anim.scale);
+                gradient.addColorStop(0, 'rgba(255, 215, 0, 0.8)');
+                gradient.addColorStop(0.5, 'rgba(255, 140, 0, 0.6)');
+                gradient.addColorStop(1, 'rgba(255, 69, 0, 0.2)');
+                this.ctx.fillStyle = gradient;
+                this.ctx.beginPath();
+                this.ctx.arc(centerX, centerY, 150 * anim.scale, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.restore();
+                
+                // 回転する装飾リング
+                this.ctx.save();
+                this.ctx.globalAlpha = Math.min(1, anim.timer / 30);
+                this.ctx.translate(centerX, centerY);
+                this.ctx.rotate(anim.rotation);
+                this.ctx.strokeStyle = '#FFD700';
+                this.ctx.lineWidth = 4;
+                this.ctx.setLineDash([10, 5]);
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, 120 * anim.scale, 0, Math.PI * 2);
+                this.ctx.stroke();
+                this.ctx.restore();
+                
+                // メインテキスト「LEVEL UP!」
+                if (anim.scale > 0.1) {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = Math.min(1, anim.timer / 30);
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    
+                    // テキストの影
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.font = `bold ${60 * anim.scale + 4}px Arial`;
+                    this.ctx.fillText('LEVEL UP!', centerX + 3, centerY - 30 + 3);
+                    
+                    // メインテキスト
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.font = `bold ${60 * anim.scale}px Arial`;
+                    this.ctx.strokeStyle = '#FF8C00';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeText('LEVEL UP!', centerX, centerY - 30);
+                    this.ctx.fillText('LEVEL UP!', centerX, centerY - 30);
+                    
+                    // レベル数字
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.font = `bold ${80 * anim.scale + 4}px Arial`;
+                    this.ctx.fillText(anim.newLevel, centerX + 3, centerY + 40 + 3);
+                    
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.font = `bold ${80 * anim.scale}px Arial`;
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 4;
+                    this.ctx.strokeText(anim.newLevel, centerX, centerY + 40);
+                    this.ctx.fillText(anim.newLevel, centerX, centerY + 40);
+                    
+                    this.ctx.restore();
+                }
+                
+                // 星のエフェクト
+                if (anim.scale > 0.3) {
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (Math.PI * 2 * i) / 8 + anim.rotation * 2;
+                        const distance = 200 * anim.scale;
+                        const starX = centerX + Math.cos(angle) * distance;
+                        const starY = centerY + Math.sin(angle) * distance;
+                        
+                        this.ctx.save();
+                        this.ctx.globalAlpha = Math.min(1, anim.timer / 30) * 0.8;
+                        this.ctx.translate(starX, starY);
+                        this.ctx.rotate(angle + anim.rotation * 3);
+                        this.ctx.fillStyle = '#FFD700';
+                        this.drawStar(0, 0, 15 * anim.scale);
+                        this.ctx.restore();
+                    }
+                }
+                
+                this.ctx.restore();
+            }
+            
+            drawStar(x, y, size) {
+                this.ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+                    const outerX = x + Math.cos(angle) * size;
+                    const outerY = y + Math.sin(angle) * size;
+                    const innerAngle = angle + Math.PI / 5;
+                    const innerX = x + Math.cos(innerAngle) * size * 0.4;
+                    const innerY = y + Math.sin(innerAngle) * size * 0.4;
+                    
+                    if (i === 0) {
+                        this.ctx.moveTo(outerX, outerY);
+                    } else {
+                        this.ctx.lineTo(outerX, outerY);
+                    }
+                    this.ctx.lineTo(innerX, innerY);
+                }
+                this.ctx.closePath();
+                this.ctx.fill();
+            }
+            
+            update() {
+                if (!this.gameStarted) return;
+                
+                this.updatePlayer();
+                this.updateEnemies();
+                this.updateCollectibles();
+                this.updateParticles();
+                this.updatePlatforms();
+                this.updateVisuals();
+                this.updateLevelUpAnimation(); // レベルアップアニメーション更新
+                this.checkCollisions();
+                this.updateUI();
+                
+                if (this.invulnerable) {
+                    this.invulnerableTime--;
+                    if (this.invulnerableTime <= 0) {
+                        this.invulnerable = false;
+                    }
+                }
+            }
+            
+            updatePlayer() {
+                this.player.trail.push({x: this.player.x, y: this.player.y, life: 10});
+                this.player.trail = this.player.trail.filter(t => t.life-- > 0);
+                
+                let moveSpeed = 5;
+                if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) {
+                    if (this.player.dashCooldown <= 0) {
+                        moveSpeed = 12;
+                        this.player.dashCooldown = 30;
+                    }
+                }
+                
+                // 左右移動 - 矢印キーとWASDキー両方対応
+                if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+                    this.player.x = Math.max(0, this.player.x - moveSpeed);
+                }
+                if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+                    this.player.x = Math.min(this.width - this.player.width, this.player.x + moveSpeed);
+                }
+                
+                // ジャンプ - スペースキーとWキー両方対応
+                if ((this.keys['Space'] || this.keys['KeyW']) && this.player.onGround) {
+                    this.player.velocityY = -18;
+                    this.player.onGround = false;
+                }
+                
+                // 重力
+                this.player.velocityY += 0.8;
+                this.player.y += this.player.velocityY;
+                
+                // プラットフォームとの衝突判定
+                this.player.onGround = false;
+                this.platforms.forEach(platform => {
+                    if (this.player.x < platform.x + platform.width &&
+                        this.player.x + this.player.width > platform.x &&
+                        this.player.y + this.player.height > platform.y &&
+                        this.player.y + this.player.height < platform.y + platform.height + 10 &&
+                        this.player.velocityY >= 0) {
+                        
+                        this.player.y = platform.y - this.player.height;
+                        this.player.velocityY = 0;
+                        this.player.onGround = true;
+                    }
+                });
+                
+                // 画面下での死亡判定
+                if (this.player.y > this.height) {
+                    this.takeDamage(50);
+                    this.player.y = this.height - 120;
+                    this.player.velocityY = 0;
+                }
+                
+                // ダッシュクールダウン
+                if (this.player.dashCooldown > 0) {
+                    this.player.dashCooldown--;
+                }
+            }
+            
+            updateEnemies() {
+                this.enemies = this.enemies.filter(enemy => {
+                    enemy.x -= enemy.speed;
+                    
+                    if (enemy.type === 'jumper') {
+                        enemy.jumpTimer++;
+                        if (enemy.jumpTimer > 60 && enemy.onGround) {
+                            enemy.velocityY = -12;
+                            enemy.onGround = false;
+                            enemy.jumpTimer = 0;
+                        }
+                        
+                        enemy.velocityY += 0.8;
+                        enemy.y += enemy.velocityY;
+                        
+                        if (enemy.y >= this.height - 60) {
+                            enemy.y = this.height - 60;
+                            enemy.velocityY = 0;
+                            enemy.onGround = true;
+                        }
+                    }
+                    
+                    return enemy.x > -enemy.width;
+                });
+            }
+            
+            updateCollectibles() {
+                this.collectibles = this.collectibles.filter(collectible => {
+                    collectible.x -= collectible.speed;
+                    collectible.rotation += 0.1;
+                    return collectible.x > -collectible.width;
+                });
+            }
+            
+            updateParticles() {
+                this.particles = this.particles.filter(particle => {
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.life -= 0.02;
+                    particle.vx *= 0.98;
+                    particle.vy *= 0.98;
+                    return particle.life > 0;
+                });
+            }
+            
+            updatePlatforms() {
+                this.platforms.forEach((platform, index) => {
+                    const waveTime = Date.now() * 0.005 + platform.waveOffset;
+                    const waveHeight = Math.sin(waveTime) * (10 + this.beatIntensity * 20);
+                    platform.y = platform.originalY + waveHeight;
+                });
+                
+                this.floorWaves.forEach(wave => {
+                    wave.x += wave.speed;
+                    wave.life -= 0.02;
+                });
+            }
+            
+            updateVisuals() {
+                this.backgroundHue = (this.backgroundHue + 1.5) % 360;
+                this.beatIntensity = Math.max(0, this.beatIntensity - 0.05);
+            }
+            
+            checkCollisions() {
+                if (!this.invulnerable) {
+                    this.enemies.forEach((enemy, index) => {
+                        if (this.player.x < enemy.x + enemy.width &&
+                            this.player.x + this.player.width > enemy.x &&
+                            this.player.y < enemy.y + enemy.height &&
+                            this.player.y + this.player.height > enemy.y) {
+                            
+                            this.takeDamage(15);
+                            this.enemies.splice(index, 1);
+                            this.combo = 0;
+                        }
+                    });
+                }
+                
+                this.collectibles.forEach((collectible, index) => {
+                    if (this.player.x < collectible.x + collectible.width &&
+                        this.player.x + this.player.width > collectible.x &&
+                        this.player.y < collectible.y + collectible.height &&
+                        this.player.y + this.player.height > collectible.y) {
+                        
+                        this.score += collectible.value * (1 + this.combo * 0.1);
+                        this.combo++;
+                        this.collectibles.splice(index, 1);
+                        
+                        this.hp = Math.min(this.maxHp, this.hp + 5);
+                    }
+                });
+            }
+            
+            takeDamage(amount) {
+                if (!this.invulnerable) {
+                    this.hp -= amount;
+                    this.invulnerable = true;
+                    this.invulnerableTime = 120;
+                    
+                    if (this.hp <= 0) {
+                        this.gameOver();
+                    }
+                }
+            }
+            
+            gameOver() {
+                this.gameStarted = false;
+                
+                this.oscillators.forEach(osc => {
+                    try { osc.osc.stop(); } catch(e) {}
+                });
+                if (this.musicTimer) clearInterval(this.musicTimer);
+                
+                this.updateAudioStatus('停止');
+                
+                // ゲームオーバー画面を表示
+                setTimeout(() => {
+                    const playAgain = confirm(`ゲームオーバー！\nスコア: ${this.score}\nレベル: ${this.level}\n最大コンボ: ${this.combo}\n\nもう一度プレイしますか？`);
+                    
+                    if (playAgain) {
+                        this.quitGame(); // メニューに戻る
+                    } else {
+                        this.quitGame(); // メニューに戻る
+                    }
+                }, 100);
+            }
+            
+            updateUI() {
+                document.getElementById('score').textContent = this.score;
+                document.getElementById('level').textContent = this.level;
+                document.getElementById('hp').textContent = this.hp;
+                document.getElementById('maxHp').textContent = this.maxHp;
+                document.getElementById('combo').textContent = this.combo;
+                
+                this.score += this.level + this.combo;
+            }
+            
+            render() {
+                // 背景
+                const gradient = this.ctx.createRadialGradient(
+                    this.width/2, this.height/2, 0,
+                    this.width/2, this.height/2, this.width/2
+                );
+                gradient.addColorStop(0, `hsl(${this.backgroundHue}, 60%, ${15 + this.beatIntensity * 25}%)`);
+                gradient.addColorStop(1, `hsl(${this.backgroundHue + 60}, 40%, 8%)`);
+                
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, this.width, this.height);
+                
+                // 床の波
+                this.floorWaves.forEach(wave => {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = wave.life;
+                    this.ctx.strokeStyle = wave.color;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.beginPath();
+                    for (let x = 0; x < this.width; x += 5) {
+                        const y = this.height - 40 + Math.sin((x + wave.x) * wave.frequency) * wave.amplitude;
+                        if (x === 0) this.ctx.moveTo(x, y);
+                        else this.ctx.lineTo(x, y);
+                    }
+                    this.ctx.stroke();
+                    this.ctx.restore();
+                });
+                
+                // パーティクル
+                this.particles.forEach(particle => {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = particle.life;
+                    this.ctx.fillStyle = particle.color;
+                    this.ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+                    this.ctx.restore();
+                });
+                
+                // プラットフォーム
+                this.platforms.forEach(platform => {
+                    this.ctx.save();
+                    this.ctx.fillStyle = `hsl(${this.backgroundHue + 180}, 60%, 25%)`;
+                    this.ctx.shadowColor = `hsl(${this.backgroundHue + 180}, 60%, 50%)`;
+                    this.ctx.shadowBlur = 5 + this.beatIntensity * 10;
+                    this.ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                    this.ctx.restore();
+                });
+                
+                // プレイヤーの軌跡
+                this.player.trail.forEach((trail, index) => {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = trail.life / 10;
+                    this.ctx.fillStyle = this.player.color;
+                    const size = (trail.life / 10) * 20;
+                    this.ctx.fillRect(trail.x + (25-size)/2, trail.y + (35-size)/2, size, size);
+                    this.ctx.restore();
+                });
+                
+                // プレイヤー
+                this.ctx.save();
+                if (this.invulnerable && Math.floor(Date.now() / 100) % 2) {
+                    this.ctx.globalAlpha = 0.5;
+                }
+                this.ctx.fillStyle = this.player.color;
+                this.ctx.shadowColor = this.player.color;
+                this.ctx.shadowBlur = 15 + this.beatIntensity * 25;
+                this.ctx.fillRect(this.player.x, this.player.y, this.player.width, this.player.height);
+                
+                // ダッシュクールダウン表示
+                if (this.player.dashCooldown > 0) {
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fillRect(this.player.x, this.player.y - 5, (this.player.width * (30 - this.player.dashCooldown)) / 30, 2);
+                }
+                this.ctx.restore();
+                
+                // エネミー
+                this.enemies.forEach(enemy => {
+                    this.ctx.save();
+                    this.ctx.fillStyle = enemy.color;
+                    this.ctx.shadowColor = enemy.color;
+                    this.ctx.shadowBlur = 8;
+                    this.ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    
+                    // タイプ表示
+                    if (enemy.type === 'fast') {
+                        this.ctx.fillStyle = '#ffffff';
+                        this.ctx.fillRect(enemy.x + 5, enemy.y + 5, 10, 2);
+                    } else if (enemy.type === 'jumper') {
+                        this.ctx.fillStyle = '#ffffff';
+                        this.ctx.fillRect(enemy.x + 7, enemy.y + 7, 6, 6);
+                    }
+                    this.ctx.restore();
+                });
+                
+                // コレクタブル
+                this.collectibles.forEach(collectible => {
+                    this.ctx.save();
+                    this.ctx.translate(collectible.x + collectible.width/2, collectible.y + collectible.height/2);
+                    this.ctx.rotate(collectible.rotation);
+                    this.ctx.fillStyle = collectible.color;
+                    this.ctx.shadowColor = collectible.color;
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.fillRect(-collectible.width/2, -collectible.height/2, collectible.width, collectible.height);
+                    this.ctx.restore();
+                });
+                
+                // レベルアップアニメーション描画
+                if (this.levelUpAnimation.active) {
+                    this.renderLevelUpAnimation();
+                }
+                
+                // ゲーム開始前
+                if (!this.gameStarted) {
+                    this.ctx.save();
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillRect(0, 0, this.width, this.height);
+                    
+                    this.ctx.fillStyle = '#00ffff';
+                    this.ctx.font = '42px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Enhanced Beat Jumper', this.width/2, this.height/2 - 100);
+                    
+                    this.ctx.font = '18px Arial';
+                    this.ctx.fillText('矢印キー または WASD で移動', this.width/2, this.height/2 - 50);
+                    this.ctx.fillText('スペース または W でジャンプ', this.width/2, this.height/2 - 20);
+                    this.ctx.fillText('Shift でダッシュ', this.width/2, this.height/2 + 10);
+                    this.ctx.fillText('下のボタンを選択してください', this.width/2, this.height/2 + 40);
+                    this.ctx.restore();
+                }
+            }
+            
+            gameLoop() {
+                this.update();
+                this.render();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        
+        // ゲーム開始
+        window.addEventListener('load', () => {
+            new EnhancedRhythmGame();
+        });
+    </script>
+</body>
+</html>
